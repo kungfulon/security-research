@@ -18,6 +18,7 @@ case $TARGET in
     REPO="https://github.com/gregkh/linux"
     DEFAULT_BRANCH="v${VERSION}"
     case $VERSION in
+        6.12.*) CONFIG_FN="lts-6.12.config" ;;
         6.6.*) CONFIG_FN="lts-6.6.config" ;;
         6.1.*) CONFIG_FN="lts-6.1.config" ;;
     esac
@@ -29,9 +30,19 @@ case $TARGET in
   mitigation)
     REPO="https://github.com/thejh/linux"
     case $VERSION in
-        v3-6.1.55)
+        v4*)
+            case $VERSION in
+                v4-6.6*) DEFAULT_BRANCH="slub-virtual-v6.6" ;;
+                v4-6.12*) DEFAULT_BRANCH="mitigations-next" ;;
+            esac
+            CONFIG_FN="mitigation-v4.config"
+            ;;
+        v3-* | v3b-*)
             DEFAULT_BRANCH="mitigations-next"
-            CONFIG_FN="mitigation-v3.config"
+            case $VERSION in
+                v3-6.1.55) CONFIG_FN="mitigation-v3.config" ;;
+                v3b-6.1.55) CONFIG_FN="mitigation-v3b.config" ;;
+            esac
             CONFIG_FULL_FN="mitigation-v3-full.config"
             ;;
         6.1 | 6.1-v2)
@@ -57,6 +68,17 @@ CONFIGS_DIR="$BASEDIR/kernel_configs"
 
 if [ -d "$RELEASE_DIR" ]; then echo "Release directory already exists. Stopping."; exit 1; fi
 
+echo "GCC version"
+echo "================="
+gcc --version || true
+echo
+
+echo "Clang version"
+echo "================="
+clang --version || true
+echo "================="
+echo
+
 mkdir -p $BUILD_DIR 2>/dev/null || true
 cd $BUILD_DIR
 if [ ! -d ".git" ]; then git init && git remote add origin $REPO; fi
@@ -77,7 +99,11 @@ if [ "$TARGET" == "cos" ]; then
     make lakitu_defconfig
     cp .config lakitu_defconfig
 else
-    curl 'https://cos.googlesource.com/third_party/kernel/+/refs/heads/cos-6.1/arch/x86/configs/lakitu_defconfig?format=text'|base64 -d > lakitu_defconfig
+    if [[ $VERSION == "6.12"* ]]; then
+        curl 'https://cos.googlesource.com/third_party/kernel/+/refs/heads/cos-6.12/arch/x86/configs/lakitu_defconfig?format=text'|base64 -d > lakitu_defconfig
+    else
+        curl 'https://cos.googlesource.com/third_party/kernel/+/refs/heads/cos-6.1/arch/x86/configs/lakitu_defconfig?format=text'|base64 -d > lakitu_defconfig
+    fi
     cp lakitu_defconfig .config
 fi
 
@@ -104,6 +130,11 @@ if [ ! -z "$CONFIG_FULL_FN" ]; then
         echo "The full config has differences compared to the applied config. Check if the base config changed since custom config was created."
         exit 1
     fi
+fi
+
+# since cos-109-17800-218-14, COS does not build due to __cold redefinition, quickfix this until its fixed in the COS repo
+if [ "$TARGET" == "cos" ] && grep __cold include/linux/compiler_types.h; then
+    sed -i 's/.*#define.__cold.*//' include/linux/compiler_attributes.h
 fi
 
 make -j`nproc`
